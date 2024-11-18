@@ -1,0 +1,17 @@
+(executable
+ (public_name SeaCaml)
+ (name main)
+ (modules main)
+ (libraries SeaCaml))
+
+(library
+ (name SeaCaml)
+ (modules utils ast lexer parser stringify typecheck)
+ (libraries menhirLib ppx_compare)
+ (preprocess (pps ppx_compare)))
+
+(menhir
+ (modules parser))
+
+(ocamllex
+ (modules lexer))
