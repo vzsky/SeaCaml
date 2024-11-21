@@ -1,4 +1,4 @@
-type identifier = char list
+type identifier = string
 
 type datatype = 
   | Int 

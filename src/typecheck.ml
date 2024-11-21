@@ -1,5 +1,4 @@
 open Ast
-open Utils
 
 type context_var = {
   id: string;
@@ -38,7 +37,7 @@ let paramstype ps = List.map paramtype ps ;;
 let ctx_add_func f ctx = 
   let (dt, id, ps, _) = f in
   { ctx with
-    funcs= { id=string_of_charlist id; return=dt; params=paramstype ps } ::ctx.funcs
+    funcs= { id=id; return=dt; params=paramstype ps } ::ctx.funcs
   }
 ;;
 
@@ -64,7 +63,7 @@ let rec remove_outscope_vars s (vs: context_var list) =
 
 let ctx_add_param p ctx = 
   let (dt, id) = p in 
-  { ctx with vars={id=string_of_charlist id;var_type=dt;scope=ctx.scope}::ctx.vars }
+  { ctx with vars={id=id;var_type=dt;scope=ctx.scope}::ctx.vars }
 ;;
 
 let rec ctx_add_params ps ctx = 
@@ -98,7 +97,7 @@ let rec typecheck_expr e ctx =
   | BinOpExpr (a, o, b) -> typecheck_binop a o b ctx
   | UnaOpExpr (o, e) -> typecheck_unaop o e ctx
   | FuncCallExpr (id, es) -> 
-      let ctxf = ctx_find_func (string_of_charlist id) ctx in
+      let ctxf = ctx_find_func id ctx in
     typeassert_params es ctxf.params ctx;
     (ctx, ctxf.return) 
 
@@ -111,7 +110,7 @@ and typeassert_var v dt ctx =
 and type_of_var v ctx = 
   match v with 
   | VarIden id -> 
-      let ctxv = ctx_find_var (string_of_charlist id) ctx in ctxv.var_type
+      let ctxv = ctx_find_var id ctx in ctxv.var_type
   | VarAccess (v, e) -> 
       typeassert_expr e Int ctx;
       match type_of_var v ctx with 
@@ -190,7 +189,7 @@ let rec declare_var dt v ctx =
 
 let ctx_add_var dt v ctx = 
   let (dt, id) = declare_var dt v ctx in
-  {ctx with vars={id=string_of_charlist id;scope=ctx.scope;var_type=dt}::ctx.vars}
+  {ctx with vars={id=id;scope=ctx.scope;var_type=dt}::ctx.vars}
 ;;
 
 let rec ctx_add_vars dt vs ctx = 

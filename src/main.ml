@@ -20,6 +20,11 @@ let () =
       print_endline (Stringify.stringify program);
       Typecheck.typecheck program;
       print_endline "Typecheck successful!";
+      print_endline "Interpreting..."; 
+      let (context, _) = Interp.interpret program in 
+      print_endline (Interp.show_memory context);
+      print_endline (Interp.show_symbol_table context)
+       
     with
     | Parser.Error ->
         close_in in_channel;
