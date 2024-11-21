@@ -1,6 +1,6 @@
 int main() {
     int a, b;
-    int arr[5];
-    int array[5][5];
+    int arr[3];
+    int array[6][3];
     return 0;
 }

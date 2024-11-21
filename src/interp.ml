@@ -1,6 +1,8 @@
 open Ast
 open Utils
 
+let tape_size = 100
+
 type context_func = {
   decl: function_decl 
 }
@@ -12,7 +14,7 @@ type value =
   | BoolValue of bool option
   | PointerValue of int option
   | Null (* \0 *)
-type memory = value list
+type memory = value array
 
 type symbol_entry = {
   name: string; 
@@ -20,12 +22,13 @@ type symbol_entry = {
 }
 
 type context = {
-  memory: memory;
+  memory: memory; 
+  memory_pos: int;
   symbol_table: symbol_entry list;
   funcs: context_func list 
 }
 
-let empty_context = {memory=[]; symbol_table=[]; funcs=[]}
+let empty_context = {memory=(Array.make tape_size Null); memory_pos=0; symbol_table=[]; funcs=[]}
 
 exception RuntimeError of string
 
@@ -74,14 +77,14 @@ let assert_int value =
   | _ -> raise (RuntimeError "int assertion failed")
 
 let allocate_null context = 
-  let memory = Null::context.memory in 
-  let index = List.length memory in
-  {context with memory}, index
+  let pos = context.memory_pos in 
+  context.memory.(pos) <- Null;
+  {context with memory_pos=pos+1}, pos
 
 let allocate_pointer addr context = 
-  let memory = (PointerValue (Some addr))::context.memory in 
-  let index = List.length memory in
-  {context with memory}, index
+  let pos = context.memory_pos in 
+  context.memory.(pos) <- PointerValue (Some addr);
+  {context with memory_pos=pos+1}, pos
 
 let allocate_pointers addrs = 
   match addrs with 
@@ -102,9 +105,9 @@ let allocate_mem datatype context =
     | Void -> raise (RuntimeError "don't allocate for void")
     | Pointer _ -> PointerValue None
     in 
-  let memory = cell::context.memory in 
-  let index = List.length memory in
-  {context with memory}, index
+  let pos = context.memory_pos in 
+  context.memory.(pos) <- cell;
+  {context with memory_pos=pos+1}, pos
 
 let rec allocate_mems datatype var = 
   match var with 
@@ -116,7 +119,7 @@ let rec allocate_mems datatype var =
       let* addrs = repeat n (allocate_mems datatype v) in
 
       match v with 
-      | VarIden _ -> allocate_null >>> return (last addrs)
+      | VarIden _ -> allocate_null >>> return (List.hd addrs)
       | VarAccess _ -> allocate_pointers addrs 
 
 and interp_expr e = 
@@ -176,9 +179,7 @@ let string_of_value v =
 let string_of_symbol_entry s = s.name ^ "@" ^ string_of_int s.addr
 
 let show_memory context = 
-  let len = (List.length context.memory |> string_of_int) ^ " cells - " in
-  let tape = List.map (string_of_value) (List.rev context.memory) |> unwords "::" in 
-  len ^ tape
+  Array.map string_of_value context.memory |> Array.to_list |> unwords "::"
 
 let show_symbol_table context = 
   List.map (string_of_symbol_entry) (List.rev context.symbol_table) |> unwords "::"
