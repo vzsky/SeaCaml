@@ -17,7 +17,16 @@ let string_of_param p =
 
 let string_of_params ps = unwords ", " (List.map string_of_param ps);; 
 
-let string_of_expression _ = "expression" ;;
+let string_of_expression e = 
+  match e with 
+  | StringValue _ -> "expr_string"
+  | IntValue _ -> "expr_int"
+  | FloatValue _ -> "expr_float"
+  | VariableExpr _ -> "expr_var"
+  | BinOpExpr _ -> "expr_binop"
+  | PlusPlusExpr _ -> "expr_++"
+  | UnaOpExpr _ -> "expr_unaop"
+  | FuncCallExpr _ -> "expr_funccall"
 
 let rec string_of_variable v = 
   match v with 
