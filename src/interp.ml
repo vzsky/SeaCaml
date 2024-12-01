@@ -61,13 +61,13 @@ let get_memory_characteristic stack_or_heap =
   | Stack -> (fun ctx -> ctx.stack_pos), (fun ctx -> fun n -> {ctx with stack_pos=n}), -1
   | Heap -> (fun ctx -> ctx.heap_pos), (fun ctx -> fun n -> {ctx with heap_pos=n}), +1
 
-module WithContext = struct
-  type 'a t = context -> context * 'a
+module ContextMonad = struct
+  type 'a ctxMonad = context -> context * 'a
 
-  let return (x : 'a) : 'a t =
+  let return (x : 'a) : 'a ctxMonad =
     fun ctx -> (ctx, x)
 
-  let bind (m : 'a t) (f : 'a -> 'b t) : 'b t =
+  let bind (m : 'a ctxMonad) (f : 'a -> 'b ctxMonad) : 'b ctxMonad =
     fun ctx ->
       let (ctx', a) = m ctx in
       f a ctx'
@@ -75,13 +75,13 @@ module WithContext = struct
   let ( let* ) = bind
   let (>>=) = bind
 
-  let (>>>) (f: 'a t) (g: 'b t) = let* _ = f in g
+  let (>>>) (f: 'a ctxMonad) (g: 'b ctxMonad) = let* _ = f in g
 
 end
 
-open WithContext
+open ContextMonad
 
-let rec map_with_context (f: 'a -> 'b WithContext.t) (l: 'a list) = 
+let rec map_with_context (f: 'a -> 'b ctxMonad) (l: 'a list) = 
   match l with 
   | [] -> return []
   | h::t -> 
@@ -89,15 +89,39 @@ let rec map_with_context (f: 'a -> 'b WithContext.t) (l: 'a list) =
       let* tail = map_with_context f t in 
       return (head::tail)
 
-let fold_context (f: 'a -> 'b WithContext.t) (l: 'a list) =
+let fold_context (f: 'a -> 'b ctxMonad) (l: 'a list) =
   map_with_context f l >>> return ()
 
-let repeat_with_context (n: int) (m: 'a WithContext.t) : ('a list) WithContext.t =
+let repeat_with_context (n: int) (m: 'a ctxMonad) : ('a list) ctxMonad =
   map_with_context (fun _ -> m) (iota n)
 
 (*******************************************************)
 (**************** Visualization Tools ******************)
 (*******************************************************)
+
+let printf_with_values format values =
+  let rec process fmt vals =
+    match fmt, vals with
+    | "", [] -> ""
+    | "", _ -> failwith "Too many arguments provided"
+    | _, [] -> failwith "Not enough arguments provided"
+    | _ ->
+        let next_percent = String.index_opt fmt '%' in
+        (match next_percent with
+        | None -> fmt
+        | Some idx ->
+            let before = String.sub fmt 0 idx in
+            let specifier = String.get fmt (idx + 1) in
+            let rest_fmt = String.sub fmt (idx + 2) (String.length fmt - idx - 2) in
+            let formatted_value =
+              match specifier, (List.hd vals) with
+              | 'd', IntValue Some i -> string_of_int i
+              | 'f', FloatValue Some f -> string_of_float f
+              | 'c', CharValue Some c -> string_of_char c
+              | _, _ -> failwith "Mismatched format specifier and value"
+            in
+            before ^ formatted_value ^ process rest_fmt (List.tl vals))
+  in process format values
 
 let string_of_value v = 
   match v with 
@@ -136,6 +160,15 @@ let show_context context =
   "...................." 
 
 (* for the sake of completing assingment *)
+let rec pointer_all_chars addr context = 
+  let stack_or_heap = which_memory_is addr context in
+  let (_, _, direction) = get_memory_characteristic stack_or_heap in
+  let value = context.memory.(addr) in
+  match value with 
+  | Null -> context, true 
+  | CharValue Some _ -> pointer_all_chars (addr + direction) context
+  | _ -> context, false
+
 let rec show_value value  = 
   match value with 
   | IntValue i -> return (string_of_option string_of_int i)
@@ -144,12 +177,8 @@ let rec show_value value  =
   | BoolValue b -> return (string_of_option string_of_bool b)
   | PointerValue o -> (match o with 
       | Some addr -> show_pointer addr
-      | None -> return "#")
+      | None      -> return "#")
   | Null -> return "#"
-
-and show_pointer addr = 
-  let* ls = pointer_to_list addr [] in
-  return ("[" ^ (unwords "," ls) ^ "]")
 
 and pointer_to_list addr acc context = 
   let stack_or_heap = which_memory_is addr context in
@@ -158,12 +187,23 @@ and pointer_to_list addr acc context =
   match value with 
   | Null -> context, (List.rev acc) 
   | _ -> 
-      let (ctx, val_str) = show_value value context in 
-      pointer_to_list (addr+direction) (val_str::acc) ctx
+      (let* val_str = show_value value  in 
+      pointer_to_list (addr+direction) (val_str::acc)) context
 
-let print_func_call = ()
-let print_return_call = ()
-(*****)
+and show_pointer addr = 
+  let* c = pointer_all_chars addr in
+  let* ls = pointer_to_list addr [] in
+  if c then return (unwords "" ls) 
+  else return ("{" ^ (unwords "," ls) ^ "}")
+
+let print_func_call id args = 
+  let* str_args = map_with_context show_value args in
+  return (id ^ "(" ^ (unwords ", " (str_args) ) ^ ")")
+
+let print_return_call opt_val = 
+  match opt_val with 
+  | None -> return "return"
+  | Some v -> let* s = show_value v in return ("return " ^ s)
 
 (*******************************************************)
 (********************* Interp **************************)
@@ -183,6 +223,19 @@ let assert_bool value =
   match value with 
   | BoolValue Some b -> b 
   | _ -> raise (RuntimeError ("bool assertion failed"))
+
+let assert_string value = 
+  match value with 
+  | PointerValue Some p -> 
+      let* c = pointer_all_chars p in 
+      if c then show_pointer p else raise (RuntimeError ("string assertion failed"))
+  | _ -> raise (RuntimeError ("string assertion failed"))
+
+and show_pointer addr = 
+  let* c = pointer_all_chars addr in
+  let* ls = pointer_to_list addr [] in
+  if c then return (unwords "" ls) 
+  else return ("{" ^ (unwords "," ls) ^ "}")
 
 let get_return_value context = context, context.return_value
 let reset_return_value context = {context with return_value=None}, ()
@@ -279,7 +332,7 @@ let interp_binop a o b =
 
   | _ -> raise (RuntimeError "invalid binary operation"))
 
-(* TODO *)
+
 let interp_builtin id args = 
   match id with 
   | "debug_print_context" -> 
@@ -290,6 +343,10 @@ let interp_builtin id args =
       return (Some Null)
   | "println" -> 
       let* s = show_value (List.hd args) in 
+      print_endline s; return (Some Null)
+  | "printf" -> 
+      let* format = assert_string (List.hd args) in
+      let s = printf_with_values format (List.tl args) in 
       print_endline s; return (Some Null)
   | _ -> return None
 
@@ -315,15 +372,16 @@ let look_symbol_table var context =
 
 (* TODO: Implicit type casting *)
 let write_at_addr addr value context = 
-  let () = match context.memory.(addr), value with 
-  | IntValue _, IntValue _ -> ()
-  | FloatValue _, FloatValue _ -> ()
-  | CharValue _, CharValue _ -> ()
-  | BoolValue _, BoolValue _ -> ()
-  | PointerValue _, PointerValue _ -> ()
-  | Null, Null -> ()
+  let v = match context.memory.(addr), value with 
+  | IntValue _, IntValue _ -> value
+  | FloatValue _, IntValue (Some i) -> FloatValue (Some (float_of_int i))
+  | FloatValue _, FloatValue _ -> value
+  | CharValue _, CharValue _ -> value
+  | BoolValue _, BoolValue _ -> value
+  | PointerValue _, PointerValue _ -> value
+  | Null, Null -> value
   | _ -> raise (RuntimeError ("writing to a memory with different type" )) in
-  context.memory.(addr) <- value;
+  context.memory.(addr) <- v;
   context, ()
 
 let read_at_addr addr context = context, context.memory.(addr)
@@ -414,6 +472,8 @@ and interp_expr e =
       let* v = interp_expr e in interp_unaop o v
   | FuncCallExpr (id, arglist) -> 
       let* args = map_with_context interp_expr arglist in
+      let* assignment_print = print_func_call id args in
+      print_endline ("function call: " ^ assignment_print);
       let* builtin = interp_builtin id args in
       match builtin with 
       | Some v -> return v
@@ -444,11 +504,14 @@ and interp_statement statement =
       let b = assert_bool b in 
       if b then interp_scope scope else return ()
   | ReturnStmt expression -> 
-      (match expression with 
-      | Some expr ->
-        let* v = interp_expr expr in 
-        (fun context -> { context with return_value=Some v }, ())
-      | None -> (fun context -> {context with return_value=Some Null}, ()))
+      let* opt_val = (match expression with 
+        | Some expr -> let* v = interp_expr expr in return (Some v)
+        | None -> return None) in
+      let* assignment_print = print_return_call opt_val in
+      print_endline ("return call: " ^ assignment_print);
+      (match opt_val with 
+      | Some v -> (fun context -> { context with return_value=Some v }, ())
+      | None   -> (fun context -> {context with return_value=Some Null}, ()))
   | ForStmt (init_statement, expression, statement, scope) -> 
       let* _ = interp_statement init_statement in
       interp_while expression (scope @ [statement])

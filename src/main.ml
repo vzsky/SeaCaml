@@ -21,7 +21,10 @@ let () =
       Typecheck.typecheck program;
       print_endline "Typecheck successful!";
       print_endline "Interpreting..."; 
-      let (_, _) = Interp.interpret program in ()
+      print_endline ""; 
+      let (_, _) = Interp.interpret program in
+      print_endline ""; 
+      print_endline "Done!"; 
     with
     | Parser.Error ->
         close_in in_channel;
