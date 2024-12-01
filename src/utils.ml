@@ -39,3 +39,6 @@ let unwords s l = String.concat s l;;
 
 let zip lst1 lst2 =
   List.map2 (fun x y -> (x, y)) lst1 lst2
+
+let rec iota n = if n <= 0 then [] else iota (n - 1) @ [n]
+

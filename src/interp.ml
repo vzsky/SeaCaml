@@ -16,9 +16,10 @@ type value =
   | BoolValue of bool option
   | PointerValue of int option
   | Null (* \0 *)
+
 type memory = value array
 
-type stackOrHeap = | Stack | Heap
+type stackOrHeap = Stack | Heap
 
 type symbol_entry = {
   name: string; 
@@ -73,17 +74,27 @@ module WithContext = struct
 
   let ( let* ) = bind
   let (>>=) = bind
-  let (>>>) (f: 'a t) (g: 'b t) = let* _ = f in g
 
-  let rec repeat (n: int) (m: 'a t) : ('a list) t =
-    if n == 0 then return [] else 
-    let* x = m in
-    let* y = repeat (n-1) m in 
-    return (x::y)
+  let (>>>) (f: 'a t) (g: 'b t) = let* _ = f in g
 
 end
 
 open WithContext
+
+let rec map_with_context (f: 'a -> 'b WithContext.t) (l: 'a list) = 
+  match l with 
+  | [] -> return []
+  | h::t -> 
+      let* head = f h in 
+      let* tail = map_with_context f t in 
+      return (head::tail)
+
+let fold_context (f: 'a -> 'b WithContext.t) (l: 'a list) =
+  map_with_context f l >>> return ()
+
+let repeat_with_context (n: int) (m: 'a WithContext.t) : ('a list) WithContext.t =
+  map_with_context (fun _ -> m) (iota n)
+
 (*******************************************************)
 (**************** Visualization Tools ******************)
 (*******************************************************)
@@ -99,8 +110,7 @@ let string_of_value v =
 
 let string_of_symbol_entry s = s.name ^ "@" ^ string_of_int s.addr
 
-let string_of_func_def f = 
-  let (_, id, _, _) = f.decl in id
+let string_of_func_def f = let (_, id, _, _) = f.decl in id
 
 let show_memory context = 
   Array.map string_of_value context.memory |> Array.to_list |> unwords "::"
@@ -159,6 +169,21 @@ let print_return_call = ()
 (********************* Interp **************************)
 (*******************************************************)
 
+let assert_int value =
+  match value  with
+  | IntValue Some i -> i
+  | _ -> raise (RuntimeError "int assertion failed")
+
+let assert_nat value =
+  match value  with
+  | IntValue Some i -> if i < 0 then raise (RuntimeError "nat assertion failed") else i
+  | _ -> raise (RuntimeError "nat assertion failed")
+
+let assert_bool value = 
+  match value with 
+  | BoolValue Some b -> b 
+  | _ -> raise (RuntimeError ("bool assertion failed"))
+
 let get_return_value context = context, context.return_value
 let reset_return_value context = {context with return_value=None}, ()
 
@@ -178,34 +203,6 @@ let descope_func context = context |> (
   let* () = free_stack_mem (snd (List.hd context.last_func_scope)) in 
   let* () = reset_return_value in
   (fun ctx -> {ctx with last_func_scope=List.tl ctx.last_func_scope}, ())) 
-
-let rec fold_context (f: 'a -> 'b WithContext.t) (l: 'a list) =
-  match l with 
-  | [] -> return ()
-  | h::t -> f h >>> fold_context f t
-
-let rec map_with_context (f: 'a -> 'b WithContext.t) (l: 'a list) = 
-  match l with 
-  | [] -> return []
-  | h::t -> 
-      let* head = f h in 
-      let* tail = map_with_context f t in 
-      return (head::tail)
-
-let assert_option m =
-  match m with 
-  | Some a -> return a
-  | None -> raise (RuntimeError "option assertion failed")
-
-let assert_int value =
-  match value  with
-  | IntValue Some i -> return i
-  | _ -> raise (RuntimeError "int assertion failed")
-
-let assert_bool value = 
-  match value with 
-  | BoolValue Some b -> return b 
-  | _ -> raise (RuntimeError ("bool assertion failed"))
 
 let allocate_null stack_or_heap context = 
   let (get_pos, update, direction) = get_memory_characteristic stack_or_heap in 
@@ -308,28 +305,28 @@ let rec get_var_id var =
   | VarIden id -> id 
   | VarAccess (v, _) -> get_var_id v
 
-let write_symbol_table var addr stack_or_heap context = 
+let write_symbol_table stack_or_heap var addr context = 
   let id = get_var_id var in
   {context with symbol_table={name=id; addr; scope=context.scope; stack_or_heap}::context.symbol_table}, ()
 
 let look_symbol_table var context = 
   let id = get_var_id var in 
-  context, List.find (fun ent -> 
-    String.compare ent.name id == 0 
-  ) context.symbol_table
+  context, List.find (fun ent -> String.compare ent.name id == 0 ) context.symbol_table
 
 (* TODO: Implicit type casting *)
 let write_at_addr addr value context = 
   let () = match context.memory.(addr), value with 
   | IntValue _, IntValue _ -> ()
   | FloatValue _, FloatValue _ -> ()
-  | CharValue _, CharValue _ -> () 
+  | CharValue _, CharValue _ -> ()
   | BoolValue _, BoolValue _ -> ()
   | PointerValue _, PointerValue _ -> ()
   | Null, Null -> ()
   | _ -> raise (RuntimeError ("writing to a memory with different type" )) in
   context.memory.(addr) <- value;
   context, ()
+
+let read_at_addr addr context = context, context.memory.(addr)
 
 let write_str_to_addr addrs string = 
   let charlist = charlist_of_string string in 
@@ -344,8 +341,6 @@ let dereference_pointer addr context =
   | PointerValue None -> raise (RuntimeError "dereferencing a null-pointer") 
   | _ -> raise (RuntimeError "dereferencing a non-pointer")
 
-let read_at_addr addr context = context, context.memory.(addr)
-
 let rec read_variable variable = 
   let* entry = look_symbol_table variable in 
   read_memory entry.stack_or_heap entry.addr variable
@@ -357,17 +352,39 @@ and read_memory stack_or_heap addr var =
   | VarAccess (v, e) -> 
       let* pos = dereference_pointer (addr) in
       let* n = interp_expr e in 
-      let* n = assert_int n in 
+      let n = assert_nat n in 
       read_memory stack_or_heap (pos + (direction * n)) v
+
+and assign_var var value = 
+  let* entry = look_symbol_table var in
+  write_to_memory entry.stack_or_heap entry.addr var value
+
+and write_to_memory stack_or_heap addr var value = 
+  let (_, _, direction) = get_memory_characteristic stack_or_heap in 
+  match var with 
+  | VarIden _ -> write_at_addr addr value
+  | VarAccess (v, e) -> 
+      let* pos = dereference_pointer (addr) in
+      let* n = interp_expr e in 
+      let n = assert_nat n in 
+      write_to_memory stack_or_heap (pos + direction * n) v value
+
+and declare_var datatype var = 
+  let* head = allocate_mems Stack datatype var in
+  match var with 
+  | VarIden _ -> write_symbol_table Stack var head
+  | VarAccess _-> allocate_pointer Stack head >>= write_symbol_table Stack var
+
+and declare_vars datatype = fold_context (declare_var datatype)
 
 and allocate_mems stack_or_heap datatype var = 
   match var with 
   | VarIden _ -> allocate_mem stack_or_heap datatype  
   | VarAccess (v, e) -> 
       let* n = interp_expr e in 
-      let* n = assert_int n in 
+      let n = assert_nat n in 
       if n == 0 then raise (RuntimeError "allocating 0 elements array") else
-      let* addrs = repeat n (allocate_mems stack_or_heap datatype v) in
+      let* addrs = repeat_with_context n (allocate_mems stack_or_heap datatype v) in
       match v with 
       | VarIden _ -> allocate_null stack_or_heap >>> return (List.hd addrs)
       | VarAccess _ -> allocate_pointers stack_or_heap addrs 
@@ -383,7 +400,7 @@ and interp_expr e =
   | VariableExpr variable -> read_variable variable
   | StringValue string -> 
       let n = String.length string in 
-      let* addrs = repeat n (allocate_mem Heap Char) in
+      let* addrs = repeat_with_context n (allocate_mem Heap Char) in
       let* _ = allocate_null Heap in
       let* () = write_str_to_addr addrs string in
       return (PointerValue (Some (List.hd (addrs))))
@@ -391,12 +408,10 @@ and interp_expr e =
       let* value = read_variable variable in
       (match value with 
       | IntValue Some x -> 
-          assign_var variable (IntValue (Some (x+1))) 
-          >>> return value
+          assign_var variable (IntValue (Some (x+1))) >>> return value
       | _ -> raise (RuntimeError "incrementing non int type"))
   | UnaOpExpr (o, e) -> 
-      let* v = interp_expr e in 
-      interp_unaop o v
+      let* v = interp_expr e in interp_unaop o v
   | FuncCallExpr (id, arglist) -> 
       let* args = map_with_context interp_expr arglist in
       let* builtin = interp_builtin id args in
@@ -404,16 +419,6 @@ and interp_expr e =
       | Some v -> return v
       | None -> interp_funccall id args
   
-and write_to_memory stack_or_heap addr var value = 
-  let (_, _, direction) = get_memory_characteristic stack_or_heap in 
-  match var with 
-  | VarIden _ -> write_at_addr addr value
-  | VarAccess (v, e) -> 
-      let* pos = dereference_pointer (addr) in
-      let* n = interp_expr e in 
-      let* n = assert_int n in 
-      write_to_memory stack_or_heap (pos + direction * n) v value
-
 and interp_funccall id args context = 
   let func = List.find (fun func -> 
     let (_, fid, _, _) = func.decl in String.compare fid id == 0
@@ -423,26 +428,11 @@ and interp_funccall id args context =
     scope=context.scope+1; 
     last_func_scope=(context.scope+1, context.stack_pos)::context.last_func_scope
   } |>
-  let params_args = zip params args in
-  let* () = fold_context assign_param params_args in
+  let* () = fold_context assign_param (zip params args) in
   let* ret_val = until_return scope in
   return (match ret_val with 
     | Some x -> x
     | None -> Null) 
-
-and assign_var var value = 
-  let* entry = look_symbol_table var in
-  write_to_memory entry.stack_or_heap entry.addr var value
-
-and declare_var datatype var = 
-  let* head = allocate_mems Stack datatype var in
-  match var with 
-  | VarIden _ -> write_symbol_table var head Stack
-  | VarAccess _-> 
-      let* p = allocate_pointer Stack head in 
-      write_symbol_table var p Stack
-
-and declare_vars datatype = fold_context (declare_var datatype)
 
 and interp_statement statement = 
   match statement with 
@@ -451,7 +441,7 @@ and interp_statement statement =
   | ExpressionStmt expression -> interp_expr expression >>> return ()
   | IfStmt (expression, scope) -> 
       let* b = interp_expr expression in 
-      let* b = assert_bool b in 
+      let b = assert_bool b in 
       if b then interp_scope scope else return ()
   | ReturnStmt expression -> 
       (match expression with 
@@ -465,23 +455,21 @@ and interp_statement statement =
 
 and interp_while expression scope = 
   let* v = interp_expr expression in
-  let* b = assert_bool v in
+  let b = assert_bool v in
   if b then 
-    let* _ = interp_scope scope in
-    interp_while expression scope
+    interp_scope scope >>> interp_while expression scope
   else
     return ()
 
 and interp_scope scope context =
   {context with scope=context.scope+1} |>
   let* () = fold_context interp_statement scope in 
-  let* () = descope_to context.scope in 
-  return ()
+  descope_to context.scope
 
 and assign_param (parameter, value) = 
   let (datatype, iden) = parameter in 
   let* addr = allocate_mem Stack datatype in 
-  let* () = write_symbol_table (VarIden iden) addr Stack in
+  let* () = write_symbol_table Stack (VarIden iden) addr in
   write_at_addr addr value
 
 and until_return scope = 
@@ -498,6 +486,5 @@ and until_return scope =
 let interp_func func context = {context with funcs = {decl=func}::context.funcs}, ()
 let interp_program program = fold_context interp_func program 
 let interpret program = 
-  let context, () = interp_program program empty_context in
-  interp_expr (FuncCallExpr ("main", [])) context
-
+  ( interp_program program >>> interp_expr (FuncCallExpr ("main", [])) ) 
+  empty_context

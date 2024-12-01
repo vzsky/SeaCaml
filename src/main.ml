@@ -18,14 +18,10 @@ let () =
       close_in in_channel;
       print_endline "Parsing successful!";
       let program = Desugar.desugar_program program in
-      print_endline (Stringify.stringify program);
       Typecheck.typecheck program;
       print_endline "Typecheck successful!";
       print_endline "Interpreting..."; 
       let (_, _) = Interp.interpret program in ()
-      (* let (context, _) = Interp.interpret program in  *)
-      (* print_endline (Interp.show_context context); *)
-       
     with
     | Parser.Error ->
         close_in in_channel;
