@@ -1,5 +1,6 @@
 %{
   open Ast
+  open Utils
 %}
 
 %token <int> INT_LITERAL 
@@ -54,7 +55,7 @@ statement:
                                               { ForStmt($3, $5, $7, [$9]) }
   | FOR LPAREN action SEMICOLON expression SEMICOLON action RPAREN scope
                                               { ForStmt($3, $5, $7, $9) }
-  | RETURN expression SEMICOLON               { ReturnStmt($2) }
+  | RETURN expression? SEMICOLON               { ReturnStmt($2) }
 
 action:
   | variable ASSIGN expression                { AssignmentStmt($1, $3) }
@@ -88,7 +89,7 @@ una_op:
   | AND       {UOP_And}
 
 expression:
-  | STRING_LITERAL                          { StringValue($1) }
+  | STRING_LITERAL                          { StringValue(remove_quotes $1) }
   | INT_LITERAL                             { IntValue($1) }
   | FLOAT_LITERAL                           { FloatValue($1) }
   | variable                                { VariableExpr($1) }

@@ -39,7 +39,7 @@ and statement =
   | ExpressionStmt of expression
   | IfStmt of expression * scope
   | ForStmt of statement * expression * statement * scope
-  | ReturnStmt of expression
+  | ReturnStmt of expression option
 
 and scope = statement list
 

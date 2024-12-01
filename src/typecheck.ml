@@ -21,7 +21,11 @@ type context = {
 
 (* We use void here as a wildcard *)
 let printf: context_func = { id="printf"; return=Void; params=[Pointer Char; Void] }
-let empty_ctx = {scope=0; vars=[]; funcs=[printf]; return=Void};;
+let debug_print_context: context_func  = { id="debug_print_context"; return=Void; params=[] }
+let println: context_func  = { id="println"; return=Void; params=[Void] }
+let debug_println: context_func  = { id="debug_println"; return=Void; params=[Void] }
+
+let empty_ctx = {scope=0; vars=[]; funcs=[printf; debug_print_context; println; debug_println]; return=Void};;
 
 exception TypeError of string
 
@@ -215,8 +219,12 @@ let rec typecheck_stmt st ctx =
       typeassert_expr e Bool ctx; 
       let (ctx, _) = typecheck_stmt s2 ctx in 
       typecheck_scope sc ctx
-  | ReturnStmt e -> 
-      typeassert_expr e ctx.return ctx; (ctx, Void)
+  | ReturnStmt expr -> 
+      match expr with 
+      | Some e -> typeassert_expr e ctx.return ctx; (ctx, Void)
+      | None -> (match ctx.return with 
+        | Void -> (ctx, Void)
+        | _ -> raise (TypeError "typed return in a void function"))
 
 and typecheck_stmts sts ctx = 
   match sts with 

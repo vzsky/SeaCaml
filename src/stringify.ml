@@ -19,7 +19,7 @@ let string_of_params ps = unwords ", " (List.map string_of_param ps);;
 
 let string_of_expression e = 
   match e with 
-  | StringValue _ -> "expr_string"
+  | StringValue s -> "expr_string " ^ s 
   | IntValue _ -> "expr_int"
   | FloatValue _ -> "expr_float"
   | VariableExpr _ -> "expr_var"
@@ -40,10 +40,10 @@ let string_of_statement s =
   match s with 
   | DeclarationStmt (dt, vs)  ->"(declare) " ^ (string_of_datatype dt) ^ " " ^ (string_of_variables vs)
   | AssignmentStmt (v, e)     -> "(assign) " ^ (string_of_variable v) ^ " = " ^ (string_of_expression e)
-  | ExpressionStmt _          -> "(expression)"
+  | ExpressionStmt e          -> "(expression) " ^ (string_of_expression e)
   | IfStmt _                  -> "(if) "
   | ForStmt _                 -> "(for) "
-  | ReturnStmt e              -> "(return) " ^ (string_of_expression e)
+  | ReturnStmt e              -> "(return) " ^ (string_of_option string_of_expression e)
 ;;
 
 let string_of_scope sc = "{\n" ^ unwords "\n" (List.map string_of_statement sc) ^ "\n}";;
