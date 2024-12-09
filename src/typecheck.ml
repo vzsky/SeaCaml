@@ -1,4 +1,4 @@
-open Ast
+open CoreAst
 
 type context_var = {
   id: string;
@@ -104,6 +104,9 @@ let rec typecheck_expr e ctx =
       let ctxf = ctx_find_func id ctx in
     typeassert_params es ctxf.params ctx;
     (ctx, ctxf.return) 
+  | StmtsExpr (s, e) -> 
+      let (ctxd, _) = typecheck_scope s ctx in 
+      typecheck_expr e ctxd
 
 and typeassert_var v dt ctx = 
   let t = type_of_var v ctx in 
@@ -166,9 +169,8 @@ and typecheck_unaop o e ctx =
   | (UOP_Neg, Float) -> (ctx, Float)
   | (UOP_And, x) -> (ctx, Pointer x)
   | _ -> raise (TypeError "wrong unary operation")
-;;
 
-let soft_typeassert_expr e dt ctx = 
+and soft_typeassert_expr e dt ctx = 
   let (_, t) = typecheck_expr e ctx in 
   if (compare_datatype dt Int) == 0 then (
     if (compare_datatype Int t) == 0 then ()
@@ -180,29 +182,25 @@ let soft_typeassert_expr e dt ctx =
     else raise (TypeError "fail soft type assertion (float)"))
   else if (compare_datatype dt t) == 0 then ()
   else raise (TypeError "fail soft type assertion")
-;;
 
-let rec declare_var dt v ctx = 
+and declare_var dt v ctx = 
   match v with 
   | VarIden id -> (dt, id)
   | VarAccess (v, e) -> 
       typeassert_expr e Int ctx;
       let (dt, id) = (declare_var dt v ctx) in
       (Pointer dt, id)
-;;
 
-let ctx_add_var dt v ctx = 
+and ctx_add_var dt v ctx = 
   let (dt, id) = declare_var dt v ctx in
   {ctx with vars={id=id;scope=ctx.scope;var_type=dt}::ctx.vars}
-;;
 
-let rec ctx_add_vars dt vs ctx = 
+and ctx_add_vars dt vs ctx = 
   match vs with 
   | []   -> ctx
   | h::t -> ctx |> ctx_add_var dt h |> ctx_add_vars dt t
-;;
 
-let rec typecheck_stmt st ctx = 
+and typecheck_stmt st ctx = 
   match st with 
   | DeclarationStmt (dt, vs) -> 
       (ctx, Void) >>= ctx_add_vars dt vs
@@ -214,17 +212,16 @@ let rec typecheck_stmt st ctx =
   | IfStmt (e, s) -> 
       typeassert_expr e Bool ctx; 
       typecheck_scope s ctx
-  | ForStmt (s1, e, s2, sc) -> 
-      let (ctx, _) = typecheck_stmt s1 ctx in 
+  | WhileStmt (e, sc) -> 
       typeassert_expr e Bool ctx; 
-      let (ctx, _) = typecheck_stmt s2 ctx in 
       typecheck_scope sc ctx
   | ReturnStmt expr -> 
-      match expr with 
+      (match expr with 
       | Some e -> typeassert_expr e ctx.return ctx; (ctx, Void)
       | None -> (match ctx.return with 
         | Void -> (ctx, Void)
-        | _ -> raise (TypeError "typed return in a void function"))
+        | _ -> raise (TypeError "typed return in a void function")))
+  | StmtsStmt s -> typecheck_scope s ctx
 
 and typecheck_stmts sts ctx = 
   match sts with 

@@ -1,4 +1,4 @@
-open Ast
+open CoreAst
 open Utils
 
 let tape_size = 100
@@ -89,7 +89,7 @@ let rec map_with_context (f: 'a -> 'b ctxMonad) (l: 'a list) =
       let* tail = map_with_context f t in 
       return (head::tail)
 
-let fold_context (f: 'a -> 'b ctxMonad) (l: 'a list) =
+let fold_with_context (f: 'a -> 'b ctxMonad) (l: 'a list) =
   map_with_context f l >>> return ()
 
 let repeat_with_context (n: int) (m: 'a ctxMonad) : ('a list) ctxMonad =
@@ -274,7 +274,7 @@ let allocate_pointers stack_or_heap addrs =
   | [] -> raise (RuntimeError "allocating nil list of pointers")
   | h::t -> 
       let* head = allocate_pointer stack_or_heap h in 
-      let* _ = fold_context (allocate_pointer stack_or_heap) t in
+      let* _ = fold_with_context (allocate_pointer stack_or_heap) t in
       let* _ = allocate_null Stack in 
       return head
 
@@ -391,7 +391,7 @@ let write_str_to_addr addrs string =
   let writer (addr, value) = write_at_addr addr value in 
   (zip addrs charlist) 
   |> List.map (fun (i, c) -> i, CharValue (Some c)) 
-  |> fold_context writer 
+  |> fold_with_context writer 
 
 let dereference_pointer addr context = 
   match context.memory.(addr) with 
@@ -433,7 +433,7 @@ and declare_var datatype var =
   | VarIden _ -> write_symbol_table Stack var head
   | VarAccess _-> allocate_pointer Stack head >>= write_symbol_table Stack var
 
-and declare_vars datatype = fold_context (declare_var datatype)
+and declare_vars datatype = fold_with_context (declare_var datatype)
 
 and allocate_mems stack_or_heap datatype var = 
   match var with 
@@ -475,9 +475,12 @@ and interp_expr e =
       let* assignment_print = print_func_call id args in
       print_endline ("function call: " ^ assignment_print);
       let* builtin = interp_builtin id args in
-      match builtin with 
+      (match builtin with 
       | Some v -> return v
-      | None -> interp_funccall id args
+      | None -> interp_funccall id args)
+  | StmtsExpr (s, e) -> 
+      let* () = fold_with_context interp_statement s in 
+      interp_expr e
   
 and interp_funccall id args context = 
   let func = List.find (fun func -> 
@@ -488,7 +491,7 @@ and interp_funccall id args context =
     scope=context.scope+1; 
     last_func_scope=(context.scope+1, context.stack_pos)::context.last_func_scope
   } |>
-  let* () = fold_context assign_param (zip params args) in
+  let* () = fold_with_context assign_param (zip params args) in
   let* ret_val = until_return scope in
   return (match ret_val with 
     | Some x -> x
@@ -512,9 +515,8 @@ and interp_statement statement =
       (match opt_val with 
       | Some v -> (fun context -> { context with return_value=Some v }, ())
       | None   -> (fun context -> {context with return_value=Some Null}, ()))
-  | ForStmt (init_statement, expression, statement, scope) -> 
-      let* _ = interp_statement init_statement in
-      interp_while expression (scope @ [statement])
+  | WhileStmt (expression, scope) -> interp_while expression scope
+  | StmtsStmt s -> fold_with_context interp_statement s 
 
 and interp_while expression scope = 
   let* v = interp_expr expression in
@@ -526,7 +528,7 @@ and interp_while expression scope =
 
 and interp_scope scope context =
   {context with scope=context.scope+1} |>
-  let* () = fold_context interp_statement scope in 
+  let* () = fold_with_context interp_statement scope in 
   descope_to context.scope
 
 and assign_param (parameter, value) = 
@@ -547,7 +549,8 @@ and until_return scope =
       | Some _ -> descope_func >>> return return_value
  
 let interp_func func context = {context with funcs = {decl=func}::context.funcs}, ()
-let interp_program program = fold_context interp_func program 
+let interp_program program = fold_with_context interp_func program 
 let interpret program = 
   ( interp_program program >>> interp_expr (FuncCallExpr ("main", [])) ) 
   empty_context
+

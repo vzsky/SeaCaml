@@ -20,6 +20,7 @@ let () =
       let program = Desugar.desugar_program program in
       Typecheck.typecheck program;
       print_endline "Typecheck successful!";
+      (* print_endline (Stringify.stringify program); *)
       print_endline "Interpreting..."; 
       print_endline ""; 
       let (_, _) = Interp.interpret program in
