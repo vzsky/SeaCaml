@@ -41,7 +41,8 @@ rule token = parse
 
   | "+="                      { PLUS_EQ }
   | "-="                      { MINUS_EQ }
-  | "while"                       { WHILE }
+  | "while"                   { WHILE }
+  | "else"                    { ELSE }
 
   | ['a'-'z' 'A'-'Z'] ['a'-'z' 'A'-'Z' '0'-'9' '_']* as id
                               { IDENTIFIER (id |> String.to_seq |> List.of_seq |> string_of_charlist) }

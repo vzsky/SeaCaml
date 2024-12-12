@@ -10,12 +10,10 @@ let rec variable_to_list var =
   | Ast.VarAccess (v, e) -> 
       let ls, id = variable_to_list v in (e::ls, id)
 
-let desugar_compound v o e = 
-  let binop = match o with 
+let compound_to_binop o = 
+  match o with 
     | Ast.Com_PlusEq -> BOP_Plus 
-    | Ast.Com_MinusEq -> BOP_Minus in 
-  let expr = BinOpExpr (VariableExpr v, binop, e) in 
-      StmtsExpr ([AssignmentStmt (v, expr)], VariableExpr v)
+    | Ast.Com_MinusEq -> BOP_Minus 
   
 let rec list_to_core_variable ls id = 
   match ls with 
@@ -40,23 +38,36 @@ and desugar_expr expr =
   | Ast.FloatValue v -> FloatValue v 
   | Ast.IntValue v -> IntValue v 
   (* actual desugaring *)
-  | Ast.CompoundExpr (v, o, e) -> desugar_compound (desugar_variable v) o (desugar_expr e)
+  | Ast.CompoundExpr (v, o, e) -> 
+      let variable = desugar_variable v in 
+      let var_expr = VariableExpr variable in
+      let binop = compound_to_binop o in 
+      let binop_expr = BinOpExpr (var_expr, binop, desugar_expr e) in 
+      StmtsExpr ([AssignmentStmt (variable, binop_expr)], var_expr)
 
 let rec desugar_stmt stmt = 
   match stmt with
-  | Ast.DeclarationStmt (dt, vl) -> DeclarationStmt (dt, List.map reverse_variable_order vl)
   | Ast.AssignmentStmt (v, e) -> AssignmentStmt (desugar_variable v, desugar_expr e)
   | Ast.ExpressionStmt e -> ExpressionStmt (desugar_expr e)
-  | Ast.IfStmt (e, s) -> IfStmt (desugar_expr e, List.map desugar_stmt s)
   | Ast.ReturnStmt e -> ReturnStmt (Option.map desugar_expr e)
   | Ast.WhileStmt (e, s) -> WhileStmt (desugar_expr e, List.map desugar_stmt s)
   (* actual desugaring *)
+  | Ast.IfStmt (e, t, f) -> 
+      let var_if = VarIden "if" in
+      let exp_var = VariableExpr (var_if) in 
+      let get_result = [DeclarationStmt (Bool, [var_if]); AssignmentStmt (var_if, desugar_expr e)] in 
+      let true_branch = [IfStmt (exp_var, List.map desugar_stmt t)] in 
+      let false_branch = [IfStmt (UnaOpExpr (UOP_Not, exp_var), List.map desugar_stmt f)] in 
+      ScopeStmt (get_result @ true_branch @ false_branch)
   | Ast.ForStmt (st, e, st2, s) -> 
       let scope = List.map desugar_stmt (s @ [st2]) in
-      StmtsStmt [desugar_stmt st; WhileStmt(desugar_expr e, scope)] 
+      ScopeStmt [desugar_stmt st; WhileStmt(desugar_expr e, scope)] 
   | Ast.DeclareAssignStmt (dt, ves) -> 
       let fs = List.map (fun x -> fst x |> desugar_variable) ves in
-      let assigns = List.map (fun (v, e) -> AssignmentStmt (desugar_variable v, desugar_expr e)) ves in 
+      let assigns = List.concat_map (fun (v, e) -> 
+        match e with None -> [] | Some e ->
+        [AssignmentStmt (desugar_variable v, desugar_expr e)]
+      ) ves in 
       StmtsStmt ([DeclarationStmt(dt, fs)] @ assigns)
 
 

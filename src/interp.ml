@@ -15,7 +15,7 @@ type value =
   | CharValue of char option 
   | BoolValue of bool option
   | PointerValue of int option
-  | Null (* \0 *)
+  | Void
 
 type memory = value array
 
@@ -40,7 +40,7 @@ type context = {
 }
 
 let empty_context = {
-  memory=(Array.make tape_size Null); 
+  memory=(Array.make tape_size Void); 
   stack_pos=tape_size-1; 
   heap_pos=0;
   symbol_table=[]; 
@@ -69,8 +69,7 @@ module ContextMonad = struct
 
   let bind (m : 'a ctxMonad) (f : 'a -> 'b ctxMonad) : 'b ctxMonad =
     fun ctx ->
-      let (ctx', a) = m ctx in
-      f a ctx'
+      let (ctx', a) = m ctx in f a ctx'
 
   let ( let* ) = bind
   let (>>=) = bind
@@ -129,8 +128,9 @@ let string_of_value v =
   | FloatValue f -> "f " ^ (string_of_option string_of_float f)
   | CharValue c -> "c " ^ (string_of_option string_of_char c)
   | BoolValue b -> "b " ^ (string_of_option string_of_bool b)
+  | PointerValue (Some (-1)) -> "%"
   | PointerValue p -> "p " ^ (string_of_option string_of_int p)
-  | Null -> "N"
+  | Void -> "V"
 
 let string_of_symbol_entry s = s.name ^ "@" ^ string_of_int s.addr
 
@@ -159,13 +159,13 @@ let show_context context =
   "\treturn_value=" ^ (string_of_option string_of_value context.return_value) ^ "\n" ^
   "...................." 
 
-(* for the sake of completing assingment *)
+(* TODO: for the sake of completing assingment *)
 let rec pointer_all_chars addr context = 
   let stack_or_heap = which_memory_is addr context in
   let (_, _, direction) = get_memory_characteristic stack_or_heap in
   let value = context.memory.(addr) in
   match value with 
-  | Null -> context, true 
+  | PointerValue (Some -1) -> context, true 
   | CharValue Some _ -> pointer_all_chars (addr + direction) context
   | _ -> context, false
 
@@ -176,16 +176,17 @@ let rec show_value value  =
   | CharValue c -> return (string_of_option string_of_char c)
   | BoolValue b -> return (string_of_option string_of_bool b)
   | PointerValue o -> (match o with 
+      | Some (-1) -> return "%"
       | Some addr -> show_pointer addr
       | None      -> return "#")
-  | Null -> return "#"
+  | Void -> return "#"
 
 and pointer_to_list addr acc context = 
   let stack_or_heap = which_memory_is addr context in
   let (_, _, direction) = get_memory_characteristic stack_or_heap in
   let value = context.memory.(addr) in
   match value with 
-  | Null -> context, (List.rev acc) 
+  | PointerValue (Some -1) -> context, (List.rev acc) 
   | _ -> 
       (let* val_str = show_value value  in 
       pointer_to_list (addr+direction) (val_str::acc)) context
@@ -193,8 +194,16 @@ and pointer_to_list addr acc context =
 and show_pointer addr = 
   let* c = pointer_all_chars addr in
   let* ls = pointer_to_list addr [] in
-  if c then return (unwords "" ls) 
+  if c then return ("\"" ^ (unwords "" ls) ^ "\"")
   else return ("{" ^ (unwords "," ls) ^ "}")
+
+let assert_string value = 
+  match value with PointerValue (Some addr) ->
+    let* c = pointer_all_chars addr in
+    let* ls = pointer_to_list addr [] in
+    if c then return (unwords "" ls)
+    else raise (RuntimeError "string assertion failed: not a string")
+  | _ -> raise (RuntimeError "string assertion failed: not a string")
 
 let print_func_call id args = 
   let* str_args = map_with_context show_value args in
@@ -224,25 +233,12 @@ let assert_bool value =
   | BoolValue Some b -> b 
   | _ -> raise (RuntimeError ("bool assertion failed"))
 
-let assert_string value = 
-  match value with 
-  | PointerValue Some p -> 
-      let* c = pointer_all_chars p in 
-      if c then show_pointer p else raise (RuntimeError ("string assertion failed"))
-  | _ -> raise (RuntimeError ("string assertion failed"))
-
-and show_pointer addr = 
-  let* c = pointer_all_chars addr in
-  let* ls = pointer_to_list addr [] in
-  if c then return (unwords "" ls) 
-  else return ("{" ^ (unwords "," ls) ^ "}")
-
 let get_return_value context = context, context.return_value
 let reset_return_value context = {context with return_value=None}, ()
 
 let free_stack_mem addr context = 
   for i = context.stack_pos to addr do
-    context.memory.(i) <- Null
+    context.memory.(i) <- Void
   done;
   {context with stack_pos=addr}, ()
 
@@ -260,7 +256,7 @@ let descope_func context = context |> (
 let allocate_null stack_or_heap context = 
   let (get_pos, update, direction) = get_memory_characteristic stack_or_heap in 
   let pos = get_pos context in 
-  context.memory.(pos) <- Null;
+  context.memory.(pos) <- (PointerValue (Some (-1)));
   update context (pos+direction), pos
 
 let allocate_pointer stack_or_heap addr context = 
@@ -332,22 +328,27 @@ let interp_binop a o b =
 
   | _ -> raise (RuntimeError "invalid binary operation"))
 
+let assert_arity k args = 
+  if (List.length args) == k then () else raise (RuntimeError "wrong arity")
 
 let interp_builtin id args = 
   match id with 
   | "debug_print_context" -> 
+      assert_arity 0 args;
       (fun context -> print_endline (show_context context);
-         context, (Some Null))
+         context, (Some Void))
   | "debug_println" -> 
+      assert_arity 1 args;
       print_endline ("println " ^ string_of_value (List.hd args));
-      return (Some Null)
+      return (Some Void)
   | "println" -> 
+      assert_arity 1 args;
       let* s = show_value (List.hd args) in 
-      print_endline s; return (Some Null)
+      print_endline s; return (Some Void)
   | "printf" -> 
       let* format = assert_string (List.hd args) in
       let s = printf_with_values format (List.tl args) in 
-      print_endline s; return (Some Null)
+      print_endline s; return (Some Void)
   | _ -> return None
 
 let interp_unaop o v = 
@@ -379,7 +380,7 @@ let write_at_addr addr value context =
   | CharValue _, CharValue _ -> value
   | BoolValue _, BoolValue _ -> value
   | PointerValue _, PointerValue _ -> value
-  | Null, Null -> value
+  | Void, Void -> value
   | _ -> raise (RuntimeError ("writing to a memory with different type" )) in
   context.memory.(addr) <- v;
   context, ()
@@ -478,9 +479,10 @@ and interp_expr e =
       (match builtin with 
       | Some v -> return v
       | None -> interp_funccall id args)
+  | ScopeExpr (s, e) -> 
+      interp_scope s >>> interp_expr e
   | StmtsExpr (s, e) -> 
-      let* () = fold_with_context interp_statement s in 
-      interp_expr e
+      fold_with_context interp_statement s >>> interp_expr e
   
 and interp_funccall id args context = 
   let func = List.find (fun func -> 
@@ -495,7 +497,7 @@ and interp_funccall id args context =
   let* ret_val = until_return scope in
   return (match ret_val with 
     | Some x -> x
-    | None -> Null) 
+    | None -> Void) 
 
 and interp_statement statement = 
   match statement with 
@@ -514,9 +516,10 @@ and interp_statement statement =
       print_endline ("return call: " ^ assignment_print);
       (match opt_val with 
       | Some v -> (fun context -> { context with return_value=Some v }, ())
-      | None   -> (fun context -> {context with return_value=Some Null}, ()))
+      | None   -> (fun context -> {context with return_value=Some Void}, ()))
   | WhileStmt (expression, scope) -> interp_while expression scope
   | StmtsStmt s -> fold_with_context interp_statement s 
+  | ScopeStmt s -> interp_scope s 
 
 and interp_while expression scope = 
   let* v = interp_expr expression in

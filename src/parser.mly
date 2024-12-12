@@ -10,7 +10,7 @@
 %token INT FLOAT BOOL VOID IF FOR RETURN
 %token PLUS MINUS STAR DIV EQ LT GT LTE GTE LAND LOR NOT AND INC ASSIGN
 %token SEMICOLON LPAREN RPAREN LBRACKET RBRACKET LBRACE RBRACE COMMA EOF
-%token PLUS_EQ MINUS_EQ WHILE
+%token PLUS_EQ MINUS_EQ WHILE ELSE
 %start <program> program
 %type <CoreAst.datatype> datatype
 %type <statement> statement
@@ -46,32 +46,37 @@ parameter:
 scope:
   LBRACE statement* RBRACE { $2 }
 
+var_eq_exp: 
+  | variable ASSIGN expression                  {($1, Some $3)}
+  | variable                                    {($1, None)}
 var_eq_exp_list: 
-  variable ASSIGN expression comma_var_eq_exp*  {($1, $3) :: $4}
+  var_eq_exp comma_var_eq_exp*                  {$1 :: $2}
 comma_var_eq_exp:
-  COMMA variable ASSIGN expression              {($2, $4)}
+  COMMA var_eq_exp                              {$2}
+
+statement_or_scope: 
+  | statement     { [$1] }
+  | scope         {  $1  } 
 
 statement: 
-  | datatype variable_list SEMICOLON          { DeclarationStmt($1, $2) }
-  | action SEMICOLON                          { $1 }
-  | IF LPAREN expression RPAREN statement     { IfStmt($3, [$5]) }
-  | IF LPAREN expression RPAREN scope         { IfStmt($3, $5) }
-  | RETURN expression? SEMICOLON              { ReturnStmt($2) }
-  | WHILE LPAREN expression RPAREN scope      { WhileStmt($3, $5) }
+  | action SEMICOLON                                    { $1 }
+  | IF LPAREN expression RPAREN statement_or_scope      { IfStmt($3, $5, []) }
+  | RETURN expression? SEMICOLON                        { ReturnStmt($2) }
+  | WHILE LPAREN expression RPAREN statement_or_scope   { WhileStmt($3, $5) }
 
-  | FOR LPAREN action SEMICOLON expression SEMICOLON action RPAREN statement 
-                                              { ForStmt($3, $5, $7, [$9]) }
-  | FOR LPAREN action SEMICOLON expression SEMICOLON action RPAREN scope
-                                              { ForStmt($3, $5, $7, $9) }
-  | datatype var_eq_exp_list SEMICOLON            { DeclareAssignStmt ($1, $2) }
+  | FOR LPAREN action SEMICOLON expression SEMICOLON 
+    action RPAREN statement_or_scope                    { ForStmt($3, $5, $7, $9) }
+  | IF LPAREN expression RPAREN statement_or_scope 
+    ELSE statement_or_scope                             { IfStmt($3, $5, $7) }
 
 action:
-  | variable ASSIGN expression                { AssignmentStmt($1, $3) }
-  | expression                                { ExpressionStmt($1) }
+  | variable ASSIGN expression                          { AssignmentStmt($1, $3) }
+  | expression                                          { ExpressionStmt($1) }
+  | datatype var_eq_exp_list                            { DeclareAssignStmt ($1, $2) }
 
 variable:
-  | IDENTIFIER                                { VarIden ($1) }
-  | variable LBRACKET expression RBRACKET     { VarAccess ($1, $3) }
+  | IDENTIFIER                                          { VarIden ($1) }
+  | variable LBRACKET expression RBRACKET               { VarAccess ($1, $3) }
 
 variable_list:
   | variable comma_variable*  { $1 :: $2 }
@@ -106,12 +111,12 @@ expression:
   | FLOAT_LITERAL                           { FloatValue($1) }
   | variable                                { VariableExpr($1) }
   | variable INC                            { PlusPlusExpr($1) }
+  | variable compound_op expression         { CompoundExpr($1, $2, $3) }
   | expression bin_op expression            { BinOpExpr($1, $2, $3) }
   | una_op expression                       { UnaOpExpr($1, $2) }
   | IDENTIFIER LPAREN expressions RPAREN    { FuncCallExpr($1, $3) }
   | LPAREN expression RPAREN                { $2 }
 
-  | variable compound_op expression         { CompoundExpr($1, $2, $3) }
 
 expressions:
   | /* empty */                   { [] }

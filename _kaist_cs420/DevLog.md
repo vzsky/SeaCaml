@@ -12,3 +12,4 @@
 
 ## potentially to do: 
 - Expand the language AST and statement
+- statements and expression can be merged!? no need to separate

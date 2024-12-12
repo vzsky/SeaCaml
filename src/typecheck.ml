@@ -107,6 +107,9 @@ let rec typecheck_expr e ctx =
   | StmtsExpr (s, e) -> 
       let (ctxd, _) = typecheck_scope s ctx in 
       typecheck_expr e ctxd
+  | ScopeExpr (s, e) -> 
+      let (ctxd, _) = typecheck_scope s ctx in 
+      typecheck_expr e ctxd
 
 and typeassert_var v dt ctx = 
   let t = type_of_var v ctx in 
@@ -222,6 +225,7 @@ and typecheck_stmt st ctx =
         | Void -> (ctx, Void)
         | _ -> raise (TypeError "typed return in a void function")))
   | StmtsStmt s -> typecheck_scope s ctx
+  | ScopeStmt s -> typecheck_scope s ctx
 
 and typecheck_stmts sts ctx = 
   match sts with 

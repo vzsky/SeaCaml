@@ -18,14 +18,13 @@ and expression =
   | CompoundExpr of variable_rev * compound_operators * expression
 
 and statement = 
-  | DeclarationStmt of CoreAst.datatype * variable_rev list
   | AssignmentStmt of variable_rev * expression
   | ExpressionStmt of expression
-  | IfStmt of expression * scope
+  | IfStmt of expression * scope * scope
   | ReturnStmt of expression option
   | WhileStmt of expression * scope
 (* more statements *)
-  | DeclareAssignStmt of CoreAst.datatype * (variable_rev * expression) list 
+  | DeclareAssignStmt of CoreAst.datatype * (variable_rev * expression option) list
   | ForStmt of statement * expression * statement * scope
 
 and scope = statement list

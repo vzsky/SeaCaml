@@ -28,6 +28,7 @@ let string_of_expression e =
   | UnaOpExpr _ -> "expr_unaop"
   | FuncCallExpr _ -> "expr_funccall"
   | StmtsExpr _ -> "expr_statements"
+  | ScopeExpr _ -> "expr_scope"
 
 let rec string_of_variable v = 
   match v with 
@@ -46,6 +47,7 @@ let rec string_of_statement s =
   | WhileStmt _               -> "(while) "
   | ReturnStmt e              -> "(return) " ^ (string_of_option string_of_expression e)
   | StmtsStmt s               -> "(stmts) " ^ (unwords " " (List.map string_of_statement s))
+  | ScopeStmt s               -> "(scope) " ^ (unwords " " (List.map string_of_statement s))
 ;;
 
 let string_of_scope sc = "{\n" ^ unwords "\n" (List.map string_of_statement sc) ^ "\n}";;

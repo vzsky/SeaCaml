@@ -31,17 +31,21 @@ and expression =
   | BinOpExpr of expression * bin_operator * expression
   | PlusPlusExpr of variable
   | UnaOpExpr of una_operator * expression
-  | FuncCallExpr of identifier * expression list
-  | StmtsExpr of statement list * expression (* do scope, then return expression *) 
+  | FuncCallExpr of identifier * expression list 
+
+  | StmtsExpr of statement list * expression (* do statements, then return expression *) 
+  | ScopeExpr of statement list * expression (* do scope, then return expression *) 
 
 and statement = 
-  | StmtsStmt of statement list
   | DeclarationStmt of datatype * variable list
   | AssignmentStmt of variable * expression
   | ExpressionStmt of expression
   | IfStmt of expression * scope
   | WhileStmt of expression * scope
   | ReturnStmt of expression option
+
+  | StmtsStmt of statement list (* do statements *)
+  | ScopeStmt of statement list (* do scope (with clean-up) *) 
 
 and scope = statement list
 

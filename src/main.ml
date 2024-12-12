@@ -18,9 +18,10 @@ let () =
       close_in in_channel;
       print_endline "Parsing successful!";
       let program = Desugar.desugar_program program in
-      Typecheck.typecheck program;
-      print_endline "Typecheck successful!";
-      (* print_endline (Stringify.stringify program); *)
+      (* Typecheck.typecheck program; *)
+      (* print_endline "Typecheck successful!"; *)
+      print_endline (Stringify.stringify program);
+      print_endline "\n";
       print_endline "Interpreting..."; 
       print_endline ""; 
       let (_, _) = Interp.interpret program in
