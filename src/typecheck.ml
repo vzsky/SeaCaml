@@ -19,6 +19,8 @@ type context = {
   return: datatype;
 }
 
+open Utils.ContextMonad (struct type t = context end)
+
 (* We use void here as a wildcard *)
 let printf: context_func = { id="printf"; return=Void; params=[Pointer Char; Void] }
 let debug_print_context: context_func  = { id="debug_print_context"; return=Void; params=[] }
@@ -38,24 +40,23 @@ let soft_compare_datatype a b : int =
 let paramtype p = let (dt, _) = p in dt;;
 let paramstype ps = List.map paramtype ps ;;
 
-let ctx_add_func f ctx = 
+let ctx_get_return_dt = fun ctx -> ctx, ctx.return
+
+let ctx_add_func f = 
   let (dt, id, ps, _) = f in
-  { ctx with
+  fun ctx -> { ctx with
     funcs= { id=id; return=dt; params=paramstype ps } ::ctx.funcs
-  }
-;;
+  }, ()
 
-let ctx_find_func id ctx : context_func = 
-  match List.find_opt (fun (v: context_func) -> String.equal id v.id) ctx.funcs with 
+let ctx_find_func id = 
+  fun ctx -> (ctx, match List.find_opt (fun (v: context_func) -> String.equal id v.id) ctx.funcs with 
   | Some v -> v
-  | None -> raise (TypeError "cannot find function")
-;;
+  | None -> raise (TypeError "cannot find function"))
 
-let ctx_find_var id ctx : context_var = 
-  match List.find_opt (fun (v: context_var) -> String.equal id v.id) ctx.vars with 
+let ctx_find_var id = 
+  fun ctx -> (ctx, match List.find_opt (fun (v: context_var) -> String.equal id v.id) ctx.vars with 
   | Some v -> v
-  | None -> raise (TypeError "cannot find variables")
-;;
+  | None -> raise (TypeError "cannot find variables"))
   
 let rec remove_outscope_vars s (vs: context_var list) = 
   match vs with 
@@ -63,23 +64,22 @@ let rec remove_outscope_vars s (vs: context_var list) =
   | h::t -> 
       if h.scope > s then remove_outscope_vars s t 
       else h::(remove_outscope_vars s t)
-;;
 
-let ctx_add_param p ctx = 
+let ctx_add_param p = 
   let (dt, id) = p in 
-  { ctx with vars={id=id;var_type=dt;scope=ctx.scope}::ctx.vars }
-;;
+  fun ctx -> { ctx with vars={id=id;var_type=dt;scope=ctx.scope}::ctx.vars }, ()
 
-let rec ctx_add_params ps ctx = 
+let rec ctx_add_params ps = 
   match ps with 
-  | [] -> ctx 
-  | h::t -> ctx |> ctx_add_param h |> ctx_add_params t
-;;
+  | [] -> return () 
+  | h::t -> 
+    let* () = ctx_add_param h in 
+    ctx_add_params t
 
-let ctx_scope ctx = {ctx with scope=ctx.scope+1; } ;;
-let ctx_descope ctx = {ctx with scope=ctx.scope-1; vars=(remove_outscope_vars (ctx.scope-1) ctx.vars)} ;;
-let ctx_sink_func ret params ctx = 
-  ctx_add_params params {ctx with return=ret;}
+let ctx_scope = fun ctx -> { ctx with scope=ctx.scope+1 }, ()
+let ctx_descope = fun ctx -> { ctx with scope=ctx.scope-1; vars=(remove_outscope_vars (ctx.scope-1) ctx.vars) }, ()
+let ctx_sink_func ret params = 
+  fun ctx -> ctx_add_params params { ctx with return=ret }
 
 let (>==) cat g =   (* chain context *)
   let (c, _) = cat in g c
@@ -91,172 +91,172 @@ let (>>=) cat g =   (* map context *)
 
 (* Typechecking *)
 
-let rec typecheck_expr e ctx = 
+let rec typecheck_expr e = 
   match e with 
-  | StringValue _ -> (ctx, Pointer Char)
-  | IntValue _ -> (ctx, Int)
-  | FloatValue _ -> (ctx, Float)
-  | VariableExpr v -> (ctx, type_of_var v ctx)
-  | PlusPlusExpr v -> typeassert_var v Int ctx; (ctx, Int)
-  | BinOpExpr (a, o, b) -> typecheck_binop a o b ctx
-  | UnaOpExpr (o, e) -> typecheck_unaop o e ctx
-  | FuncCallExpr (id, es) -> 
-      let ctxf = ctx_find_func id ctx in
-    typeassert_params es ctxf.params ctx;
-    (ctx, ctxf.return) 
-  | StmtsExpr (s, e) -> 
-      let (ctxd, _) = typecheck_scope s ctx in 
-      typecheck_expr e ctxd
-  | ScopeExpr (s, e) -> 
-      let (ctxd, _) = typecheck_scope s ctx in 
-      typecheck_expr e ctxd
+  | StringValue _ -> return (Pointer Char)
+  | IntValue _ -> return Int
+  | FloatValue _ -> return Float
+  | VariableExpr v -> type_of_var v
+  | PlusPlusExpr v -> fun ctx -> let _ = typeassert_var v Int ctx in (ctx, Int)
+  | BinOpExpr (a, o, b) -> typecheck_binop a o b
+  | UnaOpExpr (o, e) -> typecheck_unaop o e
+  | FuncCallExpr (id, es) ->
+      let* ctxf = ctx_find_func id in
+      let* () = typeassert_params es ctxf.params in
+      return ctxf.return
+  | StmtsExpr (s, e) ->
+      let* _ = typecheck_stmts s in 
+      typecheck_expr e 
+  | ScopeExpr (s, e) ->
+      let* _ = typecheck_scope s in 
+      typecheck_expr e
 
-and typeassert_var v dt ctx = 
-  let t = type_of_var v ctx in 
+and typeassert_var v dt = 
+  let* t = type_of_var v in
   if (compare_datatype dt t) != 0 then
     raise (TypeError "fail var type assertion")
-  else ()
+  else return ()
 
-and type_of_var v ctx = 
+and type_of_var v = 
   match v with 
   | VarIden id -> 
-      let ctxv = ctx_find_var id ctx in ctxv.var_type
+      let* ctxv = ctx_find_var id in 
+      return ctxv.var_type
   | VarAccess (v, e) -> 
-      typeassert_expr e Int ctx;
-      match type_of_var v ctx with 
-      | Pointer x -> x
+      let* () = typeassert_expr e Int in
+      let* dt = type_of_var v in 
+      match dt with 
+      | Pointer x -> return x
       | _ -> raise (TypeError "cannot access a non-pointer")
 
-and typeassert_expr e dt ctx = 
-  let (_, t) = typecheck_expr e ctx in 
+and typeassert_expr e dt = 
+  let* t = typecheck_expr e in 
   if (compare_datatype dt t) != 0 then
     raise (TypeError "fail expr type assertion")
-  else ()
+  else return ()
 
-and typeassert_params es dts ctx = 
+and typeassert_params es dts = 
   match (es, dts) with 
-  | ([], []) -> ()
-  | (_::t, Void::tdt) ->
-      typeassert_params t tdt ctx
+  | ([], []) -> return ()
+  | (h::t, Void::tdt) ->
+      typecheck_expr h >>> typeassert_params t tdt
   | (h::t, hdt::tdt) -> 
-      typeassert_expr h hdt ctx; typeassert_params t tdt ctx
+      typeassert_expr h hdt >>> typeassert_params t tdt
   | _ -> raise (TypeError "wrong arity")
 
-and typecheck_binop a o b ctx =
-  let (ctx, ta) = typecheck_expr a ctx in
-  let (ctx, tb) = typecheck_expr b ctx in
+and typecheck_binop a o b =
+  let* ta = typecheck_expr a in
+  let* tb = typecheck_expr b in
   match (ta, o, tb) with 
-  | (Int, BOP_Plus, Int) -> (ctx, Int)
-  | (Int, BOP_Minus, Int) -> (ctx, Int)
-  | (Int, BOP_Mult, Int) -> (ctx, Int)
-  | (Int, BOP_Div, Int) -> (ctx, Int)
+  | (Int, BOP_Plus, Int) -> return Int
+  | (Int, BOP_Minus, Int) -> return Int
+  | (Int, BOP_Mult, Int) -> return Int
+  | (Int, BOP_Div, Int) -> return Int
   | _ ->
     if (soft_compare_datatype ta tb) != 0 then raise (TypeError "wrong binary operation")
     else match o with 
-    | BOP_Plus -> (ctx, Float)
-    | BOP_Minus -> (ctx, Float)
-    | BOP_Mult -> (ctx, Float)
-    | BOP_Div -> (ctx, Float)
-    | BOP_Equal -> (ctx, Bool)
-    | BOP_Lt -> (ctx, Bool)
-    | BOP_Gt -> (ctx, Bool)
-    | BOP_Lte -> (ctx, Bool)
-    | BOP_Gte -> (ctx, Bool)
+    | BOP_Plus -> return Float
+    | BOP_Minus -> return Float
+    | BOP_Mult -> return Float
+    | BOP_Div -> return Float
+    | BOP_Equal -> return Bool
+    | BOP_Lt -> return Bool
+    | BOP_Gt -> return Bool
+    | BOP_Lte -> return Bool
+    | BOP_Gte -> return Bool
     | _ -> raise (TypeError "wrong binary operation")
 
-and typecheck_unaop o e ctx =
-  let (ctx, te) = typecheck_expr e ctx in
+and typecheck_unaop o e =
+  let* te = typecheck_expr e in
   match (o, te) with 
-  | (UOP_Not, Bool) -> (ctx, Bool)
-  | (UOP_Neg, Int) -> (ctx, Int)
-  | (UOP_Neg, Float) -> (ctx, Float)
-  | (UOP_And, x) -> (ctx, Pointer x)
+  | (UOP_Not, Bool) -> return Bool
+  | (UOP_Neg, Int) -> return Int
+  | (UOP_Neg, Float) -> return Float
+  | (UOP_And, x) -> return (Pointer x)
   | _ -> raise (TypeError "wrong unary operation")
 
-and soft_typeassert_expr e dt ctx = 
-  let (_, t) = typecheck_expr e ctx in 
+and soft_typeassert_expr e dt = 
+  let* t = typecheck_expr e in 
   if (compare_datatype dt Int) == 0 then (
-    if (compare_datatype Int t) == 0 then ()
-    else if (compare_datatype Float t) == 0 then ()
+    if (compare_datatype Int t) == 0 then return ()
+    else if (compare_datatype Float t) == 0 then return ()
     else raise (TypeError "fail soft type assertion (int)"))
   else if (compare_datatype dt Float) == 0 then (
-    if (compare_datatype Int t) == 0 then ()
-    else if (compare_datatype Float t) == 0 then ()
+    if (compare_datatype Int t) == 0 then return ()
+    else if (compare_datatype Float t) == 0 then return ()
     else raise (TypeError "fail soft type assertion (float)"))
-  else if (compare_datatype dt t) == 0 then ()
+  else if (compare_datatype dt t) == 0 then return ()
   else raise (TypeError "fail soft type assertion")
 
-and declare_var dt v ctx = 
+and declare_var dt v = 
   match v with 
-  | VarIden id -> (dt, id)
+  | VarIden id -> return (dt, id)
   | VarAccess (v, e) -> 
-      typeassert_expr e Int ctx;
-      let (dt, id) = (declare_var dt v ctx) in
-      (Pointer dt, id)
+      let* () = typeassert_expr e Int in
+      let* (dt, id) = declare_var dt v in
+      return (Pointer dt, id)
 
-and ctx_add_var dt v ctx = 
-  let (dt, id) = declare_var dt v ctx in
-  {ctx with vars={id=id;scope=ctx.scope;var_type=dt}::ctx.vars}
+and ctx_add_var dt v = 
+  let* (dt, id) = declare_var dt v in
+  fun ctx -> {ctx with vars={id=id;scope=ctx.scope;var_type=dt}::ctx.vars}, ()
 
-and ctx_add_vars dt vs ctx = 
+and ctx_add_vars dt vs = 
   match vs with 
-  | []   -> ctx
-  | h::t -> ctx |> ctx_add_var dt h |> ctx_add_vars dt t
+  | []   -> return ()
+  | h::t -> ctx_add_var dt h >>> ctx_add_vars dt t
 
-and typecheck_stmt st ctx = 
+and typecheck_stmt st = 
   match st with 
-  | DeclarationStmt (dt, vs) -> 
-      (ctx, Void) >>= ctx_add_vars dt vs
+  | DeclarationStmt (dt, vs) -> ctx_add_vars dt vs >>> return Void
   | AssignmentStmt (v, e) -> 
-      let dt = type_of_var v ctx in
-      soft_typeassert_expr e dt ctx; 
-      (ctx, Void)
-  | ExpressionStmt e -> typecheck_expr e ctx
+      let* dt = type_of_var v in
+      let* () = soft_typeassert_expr e dt in 
+      return Void
+  | ExpressionStmt e -> typecheck_expr e
   | IfStmt (e, s) -> 
-      typeassert_expr e Bool ctx; 
-      typecheck_scope s ctx
+      let* () = typeassert_expr e Bool in
+      typecheck_scope s
   | WhileStmt (e, sc) -> 
-      typeassert_expr e Bool ctx; 
-      typecheck_scope sc ctx
-  | ReturnStmt expr -> 
-      (match expr with 
-      | Some e -> typeassert_expr e ctx.return ctx; (ctx, Void)
-      | None -> (match ctx.return with 
-        | Void -> (ctx, Void)
-        | _ -> raise (TypeError "typed return in a void function")))
-  | StmtsStmt s -> typecheck_scope s ctx
-  | ScopeStmt s -> typecheck_scope s ctx
+      let* () = typeassert_expr e Bool in
+      typecheck_scope sc
+  | ReturnStmt expr -> ( 
+      let* dt = ctx_get_return_dt in 
+      match expr with 
+      | Some e -> 
+          let* () = typeassert_expr e dt in 
+          return Void
+      | None -> (match dt with 
+          | Void -> return Void
+          | _ -> raise (TypeError "typed return in a void function")))
+  | StmtsStmt s -> typecheck_stmts s 
+  | ScopeStmt s -> typecheck_scope s
 
-and typecheck_stmts sts ctx = 
+and typecheck_stmts sts = 
   match sts with 
-  | [] ->   (ctx, Void)
-  | h::t -> (ctx, Void)
-      >== typecheck_stmt h
-      >== typecheck_stmts t
+  | [] ->   return Void
+  | h::t -> typecheck_stmt h >>> typecheck_stmts t
 
-and typecheck_scope sc ctx =
-  (ctx, Void)
-    >>= ctx_scope 
-    >== typecheck_stmts sc 
-    >>= ctx_descope
+and typecheck_scope sc =
+  let* () = ctx_scope in
+  let* dt = typecheck_stmts sc in
+  let* () = ctx_descope in 
+  return dt
 ;;
 
-let typecheck_func f ctx = 
-  let nctx = ctx_add_func f ctx in
+let typecheck_func f = 
+  let* () = ctx_add_func f in
   let (ret, _, params, sc) = f in 
-  (nctx, Void)
-    >>= ctx_scope 
-    >>= ctx_sink_func ret params
-    >== typecheck_stmts sc 
-    >>= ctx_descope
+  let* () = ctx_scope in 
+  let* () = ctx_sink_func ret params in 
+  let* dt = typecheck_stmts sc in 
+  let* () = ctx_descope in 
+  return dt
 ;;
 
-let rec typecheck_prog program ctx = 
+let rec typecheck_prog program = 
   match program with
-  | []   -> (ctx, Void)
-  | h::t -> (ctx, Void)
-      >== typecheck_func h
-      >== typecheck_prog t
+  | []   -> return Void
+  | h::t -> typecheck_func h >>>typecheck_prog t
 ;;
 
 let typecheck program = let _ = typecheck_prog program empty_ctx in ();;

@@ -61,24 +61,7 @@ let get_memory_characteristic stack_or_heap =
   | Stack -> (fun ctx -> ctx.stack_pos), (fun ctx -> fun n -> {ctx with stack_pos=n}), -1
   | Heap -> (fun ctx -> ctx.heap_pos), (fun ctx -> fun n -> {ctx with heap_pos=n}), +1
 
-module ContextMonad = struct
-  type 'a ctxMonad = context -> context * 'a
-
-  let return (x : 'a) : 'a ctxMonad =
-    fun ctx -> (ctx, x)
-
-  let bind (m : 'a ctxMonad) (f : 'a -> 'b ctxMonad) : 'b ctxMonad =
-    fun ctx ->
-      let (ctx', a) = m ctx in f a ctx'
-
-  let ( let* ) = bind
-  let (>>=) = bind
-
-  let (>>>) (f: 'a ctxMonad) (g: 'b ctxMonad) = let* _ = f in g
-
-end
-
-open ContextMonad
+open Utils.ContextMonad (struct type t = context end)
 
 let rec map_with_context (f: 'a -> 'b ctxMonad) (l: 'a list) = 
   match l with 
@@ -369,7 +352,9 @@ let write_symbol_table stack_or_heap var addr context =
 
 let look_symbol_table var context = 
   let id = get_var_id var in 
-  context, List.find (fun ent -> String.compare ent.name id == 0 ) context.symbol_table
+  let func_scope = fst (List.hd context.last_func_scope) in 
+  let f = fun ent -> (String.compare ent.name id == 0) && (ent.scope >= func_scope) in
+  context, List.find f context.symbol_table
 
 (* TODO: Implicit type casting *)
 let write_at_addr addr value context = 

@@ -42,3 +42,21 @@ let zip lst1 lst2 =
 
 let rec iota n = if n <= 0 then [] else iota (n - 1) @ [n]
 
+
+module ContextMonad (C: sig type t end) = struct
+  type context = C.t
+  type 'a ctxMonad = context -> context * 'a
+
+  let return (x : 'a) : 'a ctxMonad =
+    fun ctx -> (ctx, x)
+
+  let bind (m : 'a ctxMonad) (f : 'a -> 'b ctxMonad) : 'b ctxMonad =
+    fun ctx ->
+      let (ctx', a) = m ctx in f a ctx'
+
+  let ( let* ) = bind
+  let (>>=) = bind
+
+  let (>>>) (f: 'a ctxMonad) (g: 'b ctxMonad) = let* _ = f in g
+
+end

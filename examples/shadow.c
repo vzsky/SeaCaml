@@ -1,5 +1,9 @@
+int f () {
+  println(c);
+}
 
 int main () {
+  int c = 10101;
   int a = 0;
   if (0 == 0) {
     int a = 1;
@@ -15,6 +19,8 @@ int main () {
     println(b);
   }
   println(a);
+
+  f();
   // println(b); // should error
 }
 
