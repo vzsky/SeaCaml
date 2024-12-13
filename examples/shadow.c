@@ -1,5 +1,7 @@
 int f () {
-  println(c);
+  // println(c); // should error
+  int x = 0;
+  println(x);
 }
 
 int main () {
